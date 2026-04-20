@@ -2,7 +2,8 @@ import os
 import requests
 import json
 import time
-from datetime import datetime
+# 상단 부분 (timedelta, timezone 추가)
+from datetime import datetime, timedelta, timezone
 
 # ==========================================
 # 🎯 목표 가격 설정 (여기에 원하는 가격 입력)
@@ -46,10 +47,14 @@ def get_wow_token_price(access_token):
     response.raise_for_status()
     return response.json().get("price", 0) // 10000 
 
+# 중간 부분 (KST 설정 추가)
 def main():
     print("토큰 가격 스캔 시작...")
     state = load_state()
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # 한국 시간(KST) = UTC + 9시간
+    KST = timezone(timedelta(hours=9))
+    now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     
     try:
         access_token = get_access_token()
