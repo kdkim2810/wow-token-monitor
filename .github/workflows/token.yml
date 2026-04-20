@@ -1,0 +1,43 @@
+name: WoW Token Monitor
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # 30분마다 실행
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 저장소 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 파이썬 환경 설정
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: 필요 라이브러리 설치
+      run: pip install requests
+
+    - name: 스크립트 실행
+      env:
+        CLIENT_ID: ${{ secrets.CLIENT_ID }}
+        CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python monitor.py
+
+    - name: 변경된 state.json 저장 (커밋)
+      run: |
+        git config --global user.email "actions@github.com"
+        git config --global user.name "GitHub Actions"
+        if [ -f state.json ]; then
+          git add state.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update token state" && git push)
+        fi
