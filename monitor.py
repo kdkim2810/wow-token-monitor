@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ==========================================
 # 🎯 목표 가격 설정 (여기에 원하는 가격 입력)
-TARGET_PRICE = 350000 
+TARGET_PRICE = 180000
 # ==========================================
 
 STATE_FILE = "state.json"
