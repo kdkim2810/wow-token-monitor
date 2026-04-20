@@ -1,7 +1,6 @@
 name: WoW Token Monitor
 
 on:
-  push:
   schedule:
     - cron: '*/30 * * * *' # 30분마다 실행
   workflow_dispatch:
