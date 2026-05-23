@@ -2,7 +2,6 @@ import os
 import requests
 import json
 import time
-# 상단 부분 (timedelta, timezone 추가)
 from datetime import datetime, timedelta, timezone
 
 # ==========================================
@@ -47,7 +46,6 @@ def get_wow_token_price(access_token):
     response.raise_for_status()
     return response.json().get("price", 0) // 10000 
 
-# 중간 부분 (KST 설정 추가)
 def main():
     print("토큰 가격 스캔 시작...")
     state = load_state()
@@ -73,11 +71,20 @@ def main():
             else: diff_str = "(➖ 변동 없음)"
             discord_prev_str = f"{previous_price:,} 골드"
 
+        # ==========================================
+        # 🚨 디스코드 멘션 로직 추가
+        # ==========================================
+        mention_str = ""
+        if token_price <= TARGET_PRICE:
+            # 목표가 이하일 때 알려주신 ID(1093168060166307840)로 직접 멘션
+            mention_str = f"\n\n🚨 <@1093168060166307840> 긴급 매수 알림! 목표가({TARGET_PRICE:,}G) 도달! 당장 접속하세요!"
+
         # 디스코드 메시지 전송
         discord_msg = (
             f"📊 **[시세 보고]** ({now_str})\n"
             f"> ⏳ 이전 가격: {discord_prev_str}\n"
             f"> 🪙 현재 가격: **{token_price:,}** 골드 {diff_str}"
+            f"{mention_str}"
         )
         send_discord(discord_msg)
         print("디스코드 전송 완료.")
