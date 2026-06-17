@@ -77,7 +77,7 @@ def main():
         mention_str = ""
         if token_price <= TARGET_PRICE:
             # 목표가 이하일 때 알려주신 ID(1093168060166307840)로 직접 멘션
-            mention_str = f"\n\n🚨 <@1093168060166307840> 긴급 매수 알림! 목표가({TARGET_PRICE:,}G) 도달! 당장 접속하세요!"
+            mention_str = f"\n\n🚨 <@1093168060166307840> <@829217044645281813> 긴급 매수 알림! 목표가({TARGET_PRICE:,}G) 도달! 당장 접속하세요!"
 
         # 디스코드 메시지 전송
         discord_msg = (
