@@ -21,3 +21,10 @@ Python 3.12, `python -m pip install requests`
 - `python -m unittest -v`: 외부 전송 없는 회귀 테스트
 
 코드 push 시 테스트와 실제 API dry-run이 실행됩니다.
+
+## 추가 장애 보호
+
+- Discord 장애 중에도 목표가 Telegram 알림을 별도로 시도합니다. 각 채널의 확인된 상태만 저장합니다.
+- 가격 갱신 시각이 제공되면 6시간 초과 지연/10분 초과 미래/잘못된 형식을 거부합니다.
+- Telegram 중첩 parameters.retry_after를 처리하고, 60초 초과 제한은 다음 실행으로 넘깁니다.
+- 인증/알림 요청 리다이렉트와 손상된 상태 파일을 명시적 실패로 처리합니다.

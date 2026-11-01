@@ -11,6 +11,7 @@ import requests
 TARGET_PRICE = 230000
 STATE_FILE = 'state.json'
 ALERT_COOLDOWN = 600
+MAX_PRICE_AGE = 6 * 60 * 60
 DISCORD_USERS = ['1093168060166307840', '829217044645281813']
 TIMEOUT = (10, 30)
 SESSION = requests.Session()
@@ -23,7 +24,12 @@ class MonitorError(RuntimeError):
 def load_state():
     if not Path(STATE_FILE).exists():
         return {'previous_token_price': None, 'last_alert_time': 0}
-    state = json.loads(Path(STATE_FILE).read_text(encoding='utf-8'))
+    try:
+        state = json.loads(Path(STATE_FILE).read_text(encoding='utf-8'))
+    except (ValueError, OSError):
+        raise MonitorError('상태 파일을 읽을 수 없습니다. 원본을 보존하고 실행 중단') from None
+    if not isinstance(state, dict):
+        raise MonitorError('상태 파일은 JSON 객체여야 합니다. 원본 보존')
     previous = state.get('previous_token_price')
     last_alert = state.get('last_alert_time', 0)
     if previous is not None and (type(previous) is not int or previous <= 0):
@@ -44,7 +50,7 @@ def save_state(state):
 def request_json(method, url, service, retry_safe=False, **kwargs):
     for attempt in range(3):
         try:
-            response = SESSION.request(method, url, timeout=TIMEOUT, **kwargs)
+            response = SESSION.request(method, url, timeout=TIMEOUT, allow_redirects=False, **kwargs)
         except requests.RequestException as exc:
             if retry_safe and attempt < 2:
                 time.sleep(2 ** attempt)
@@ -52,12 +58,16 @@ def request_json(method, url, service, retry_safe=False, **kwargs):
             raise MonitorError(f'{service} 접속 실패: {type(exc).__name__}') from None
         if response.status_code == 429 and attempt < 2:
             try:
-                wait = float(response.json().get('retry_after', response.headers.get('Retry-After', 5)))
+                limit = response.json()
+                parameters = limit.get('parameters', {})
+                wait = float(limit.get('retry_after', parameters.get('retry_after', response.headers.get('Retry-After', 5))))
                 if not math.isfinite(wait):
                     wait = 5
             except (ValueError, TypeError, AttributeError):
                 wait = 5
-            time.sleep(min(max(wait, 1), 60))
+            if wait > 60:
+                raise MonitorError(f'{service}: 요청 제한 대기 {wait:g}초, 다음 정기 실행에서 재시도')
+            time.sleep(max(wait, 1))
             continue
         if response.status_code >= 500 and retry_safe and attempt < 2:
             time.sleep(2 ** attempt)
@@ -119,6 +129,13 @@ def get_wow_token_price(access_token):
     copper = data.get('price')
     if type(copper) is not int or copper < 10000:
         raise MonitorError('Blizzard 가격 응답 오류: 유효한 양수 price 없음 (0골드 알림 차단)')
+    updated = data.get('last_updated_timestamp')
+    if updated is not None:
+        if type(updated) is not int or updated <= 0:
+            raise MonitorError('Blizzard 가격 갱신 시각 오류')
+        age = time.time() - updated / 1000
+        if age > MAX_PRICE_AGE or age < -600:
+            raise MonitorError('Blizzard 가격 데이터가 6시간 이상 오래되었거나 미래 시각입니다')
     return copper // 10000
 
 
@@ -144,16 +161,29 @@ def main(dry_run=False):
         now_str = datetime.fromtimestamp(now, timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
         msg = (f'📊 **[시세 보고]** ({now_str})\n> ⏳ 이전 가격: {previous_text}\n'
                f'> 🪙 현재 가격: **{price:,}** 골드 {difference}{mention}')
-        send_discord(msg, mention=target_reached)
-        print('디스코드 전송 확인 완료')
-        state['previous_token_price'] = price
-        save_state(state)  # 이후 텔레그램 실패여도 확인된 Discord 가격은 보존
+        errors = []
+        try:
+            send_discord(msg, mention=target_reached)
+        except MonitorError as exc:
+            errors.append(str(exc))
+        else:
+            print('디스코드 전송 확인 완료')
+            state['previous_token_price'] = price
+            save_state(state)
+        # 한 채널의 장애가 다른 채널의 목표가 알림까지 막지 않도록 각각 처리한다.
         if target_reached and now - state['last_alert_time'] > ALERT_COOLDOWN:
             tel_msg = f'🔔 [긴급 매수 알림]\n현재가: {price:,}G {difference}\n목표가: {TARGET_PRICE:,}G 이하 도달!'
-            if send_telegram(tel_msg):
-                state['last_alert_time'] = now
-                save_state(state)
-                print('텔레그램 전송 확인 완료')
+            try:
+                delivered = send_telegram(tel_msg)
+            except MonitorError as exc:
+                errors.append(str(exc))
+            else:
+                if delivered:
+                    state['last_alert_time'] = now
+                    save_state(state)
+                    print('텔레그램 전송 확인 완료')
+        if errors:
+            raise MonitorError('; '.join(errors))
         return 0
     except Exception as exc:
         # requests 예외에는 토큰을 포함한 URL이 담길 수 있다.

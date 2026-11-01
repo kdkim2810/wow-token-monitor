@@ -58,9 +58,9 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(Path(m.STATE_FILE).read_bytes(), before)
 
     def test_discord_failure_preserves_previous_price(self):
-        with patch.object(m, 'get_access_token', return_value='token'), patch.object(m, 'get_wow_token_price', return_value=230000), patch.object(m, 'send_discord', side_effect=m.MonitorError('HTTP 500')), patch.object(m, 'send_telegram') as telegram:
+        with patch.object(m, 'get_access_token', return_value='token'), patch.object(m, 'get_wow_token_price', return_value=230000), patch.object(m, 'send_discord', side_effect=m.MonitorError('HTTP 500')), patch.object(m, 'send_telegram', return_value=True) as telegram:
             self.assertEqual(m.main(), 1)
-            telegram.assert_not_called()
+            telegram.assert_called_once()
         self.assertEqual(m.load_state()['previous_token_price'], 310000)
 
     def test_telegram_failure_does_not_advance_cooldown(self):
@@ -113,6 +113,45 @@ class MonitorTests(unittest.TestCase):
             m.load_state()
         self.assertEqual(json.loads(Path(m.STATE_FILE).read_text())['previous_token_price'], -1)
 
+
+    def test_stale_and_future_prices_fail(self):
+        for stamp in [1000, 9999999999999, 'invalid', 0]:
+            with patch.object(m, 'request_json', return_value={'price': 3102690000, 'last_updated_timestamp': stamp}):
+                with self.assertRaises(m.MonitorError):
+                    m.get_wow_token_price('token')
+
+    def test_fresh_timestamp_is_accepted(self):
+        with patch.object(m.time, 'time', return_value=100000), patch.object(m, 'request_json', return_value={'price': 3102690000, 'last_updated_timestamp': 99999000}):
+            self.assertEqual(m.get_wow_token_price('token'), 310269)
+
+    def test_telegram_nested_retry_after(self):
+        limited = Mock(status_code=429)
+        limited.json.return_value = {'parameters': {'retry_after': 12}}
+        with patch.object(m.SESSION, 'request', side_effect=[limited, Mock(status_code=204)]), patch.object(m.time, 'sleep') as sleep:
+            m.request_json('POST', 'url', '알림')
+            sleep.assert_called_once_with(12)
+
+    def test_long_rate_limit_stops_without_resending(self):
+        limited = Mock(status_code=429)
+        limited.json.return_value = {'retry_after': 120}
+        with patch.object(m.SESSION, 'request', return_value=limited) as request, patch.object(m.time, 'sleep') as sleep:
+            with self.assertRaises(m.MonitorError):
+                m.request_json('POST', 'url', '알림')
+            self.assertEqual(request.call_count, 1)
+            sleep.assert_not_called()
+
+    def test_redirect_is_rejected(self):
+        with patch.object(m.SESSION, 'request', return_value=Mock(status_code=302)) as request:
+            with self.assertRaises(m.MonitorError):
+                m.request_json('POST', 'url', '알림')
+            self.assertFalse(request.call_args.kwargs['allow_redirects'])
+
+    def test_non_object_or_corrupt_state_fails_without_rewrite(self):
+        for content in ['[]', 'null', '{broken']:
+            Path(m.STATE_FILE).write_text(content)
+            with self.assertRaises(m.MonitorError):
+                m.load_state()
+            self.assertEqual(Path(m.STATE_FILE).read_text(), content)
 
 if __name__ == '__main__':
     unittest.main()
