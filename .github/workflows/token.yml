@@ -2,40 +2,68 @@ name: WoW Token Monitor
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - monitor.py
+      - test_monitor.py
+      - .github/workflows/token.yml
 
 permissions:
   contents: write
 
+concurrency:
+  group: wow-token-monitor
+  cancel-in-progress: false
+
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
-    - name: 저장소 코드 가져오기
-      uses: actions/checkout@v4
+      - name: 저장소 코드 가져오기
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
-    - name: 파이썬 환경 설정
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      - name: 파이썬 환경 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: 필요 라이브러리 설치
-      run: pip install requests
+      - name: 필요 라이브러리 설치
+        run: python -m pip install requests
 
-    - name: 스크립트 실행
-      env:
-        CLIENT_ID: ${{ secrets.CLIENT_ID }}
-        CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python monitor.py
+      - name: 회귀 테스트
+        run: python -m unittest -v
 
-    - name: 변경된 state.json 저장 (커밋)
-      run: |
-        git config --global user.email "actions@github.com"
-        git config --global user.name "GitHub Actions"
-        if [ -f state.json ]; then
+      - name: 배포 후 API 점검
+        if: github.event_name == 'push'
+        env:
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+        run: python monitor.py --dry-run
+
+      - name: 스크립트 실행
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py
+
+      - name: 변경된 state.json 저장 (커밋)
+        if: always() && github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
           git add state.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update token state" && git push)
-        fi
+          if ! git diff --staged --quiet; then
+            git commit -m "Update token state"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          else
+            echo "상태 변경 없음"
+          fi
