@@ -153,5 +153,45 @@ class MonitorTests(unittest.TestCase):
                 m.load_state()
             self.assertEqual(Path(m.STATE_FILE).read_text(), content)
 
+    def test_future_cooldown_is_rejected_without_overwrite(self):
+        content = json.dumps({'previous_token_price': 310000, 'last_alert_time': 1000000})
+        Path(m.STATE_FILE).write_text(content)
+        with patch.object(m.time, 'time', return_value=10000):
+            with self.assertRaisesRegex(m.MonitorError, '미래'):
+                m.load_state()
+        self.assertEqual(Path(m.STATE_FILE).read_text(), content)
+
+    def test_ssl_error_is_not_retried(self):
+        with patch.object(m.SESSION, 'request', side_effect=requests.exceptions.SSLError('private-url')) as request, patch.object(m.time, 'sleep') as sleep:
+            with self.assertRaises(m.MonitorError) as error:
+                m.request_json('GET', 'url', 'API', retry_safe=True)
+            self.assertNotIn('private-url', str(error.exception))
+            self.assertEqual(request.call_count, 1)
+            sleep.assert_not_called()
+
+    def test_malformed_read_json_is_retried(self):
+        invalid = Mock(status_code=200)
+        invalid.json.side_effect = ValueError('bad json')
+        valid = Mock(status_code=200)
+        valid.json.return_value = {'price': 3102690000}
+        with patch.object(m.SESSION, 'request', side_effect=[invalid, valid]) as request, patch.object(m.time, 'sleep'):
+            self.assertEqual(m.get_wow_token_price('token'), 310269)
+            self.assertEqual(request.call_count, 2)
+
+    def test_malformed_delivery_json_is_not_retried(self):
+        invalid = Mock(status_code=200)
+        invalid.json.side_effect = ValueError('bad json')
+        with patch.object(m.SESSION, 'request', return_value=invalid) as request:
+            with self.assertRaises(m.MonitorError):
+                m.request_json('POST', 'url', '알림')
+            self.assertEqual(request.call_count, 1)
+
+    def test_http_408_read_is_retried(self):
+        valid = Mock(status_code=200)
+        valid.json.return_value = {'price': 3102690000}
+        with patch.object(m.SESSION, 'request', side_effect=[Mock(status_code=408), valid]) as request, patch.object(m.time, 'sleep'):
+            self.assertEqual(m.get_wow_token_price('token'), 310269)
+            self.assertEqual(request.call_count, 2)
+
 if __name__ == '__main__':
     unittest.main()

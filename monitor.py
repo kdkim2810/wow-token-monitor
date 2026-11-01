@@ -36,6 +36,8 @@ def load_state():
         raise MonitorError('저장된 이전 가격이 올바르지 않습니다')
     if type(last_alert) not in (int, float) or not math.isfinite(last_alert) or last_alert < 0:
         raise MonitorError('저장된 알림 시간이 올바르지 않습니다')
+    if last_alert > time.time() + 600:
+        raise MonitorError('저장된 알림 시간이 미래입니다. 상태 원본 보존')
     state.setdefault('previous_token_price', None)
     state.setdefault('last_alert_time', 0)
     return state
@@ -52,7 +54,9 @@ def request_json(method, url, service, retry_safe=False, **kwargs):
         try:
             response = SESSION.request(method, url, timeout=TIMEOUT, allow_redirects=False, **kwargs)
         except requests.RequestException as exc:
-            if retry_safe and attempt < 2:
+            transient = isinstance(exc, (requests.Timeout, requests.ConnectionError)) and not isinstance(exc, requests.exceptions.SSLError)
+            if retry_safe and transient and attempt < 2:
+                print(f'{service} 일시 접속 장애 [{attempt + 1}/3]: {type(exc).__name__}', flush=True)
                 time.sleep(2 ** attempt)
                 continue
             raise MonitorError(f'{service} 접속 실패: {type(exc).__name__}') from None
@@ -69,7 +73,7 @@ def request_json(method, url, service, retry_safe=False, **kwargs):
                 raise MonitorError(f'{service}: 요청 제한 대기 {wait:g}초, 다음 정기 실행에서 재시도')
             time.sleep(max(wait, 1))
             continue
-        if response.status_code >= 500 and retry_safe and attempt < 2:
+        if (response.status_code == 408 or response.status_code >= 500) and retry_safe and attempt < 2:
             time.sleep(2 ** attempt)
             continue
         if not 200 <= response.status_code < 300:
@@ -79,6 +83,10 @@ def request_json(method, url, service, retry_safe=False, **kwargs):
         try:
             data = response.json()
         except ValueError:
+            if retry_safe and attempt < 2:
+                print(f'{service} JSON 응답 오류 [{attempt + 1}/3], 재조회', flush=True)
+                time.sleep(2 ** attempt)
+                continue
             raise MonitorError(f'{service}: JSON 응답 해석 실패') from None
         if not isinstance(data, dict):
             raise MonitorError(f'{service}: 잘못된 응답 형식')
