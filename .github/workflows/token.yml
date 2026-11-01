@@ -6,6 +6,7 @@ on:
     paths:
       - monitor.py
       - test_monitor.py
+      - save_state.sh
       - .github/workflows/token.yml
 
 permissions:
@@ -42,7 +43,7 @@ jobs:
         env:
           CLIENT_ID: ${{ secrets.CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-        run: python monitor.py --dry-run
+        run: python -u monitor.py --dry-run
 
       - name: 스크립트 실행
         if: github.event_name == 'workflow_dispatch'
@@ -52,18 +53,8 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python monitor.py
+        run: python -u monitor.py
 
       - name: 변경된 state.json 저장 (커밋)
         if: always() && github.event_name == 'workflow_dispatch'
-        run: |
-          git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
-          git add state.json
-          if ! git diff --staged --quiet; then
-            git commit -m "Update token state"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          else
-            echo "상태 변경 없음"
-          fi
+        run: bash save_state.sh state.json
