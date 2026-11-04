@@ -68,7 +68,12 @@ def request_json(method, url, service, retry_safe=False, **kwargs):
                 if not math.isfinite(wait):
                     wait = 5
             except (ValueError, TypeError, AttributeError):
-                wait = 5
+                try:
+                    wait = float(response.headers.get('Retry-After', 5))
+                    if not math.isfinite(wait):
+                        wait = 5
+                except (ValueError, TypeError):
+                    wait = 5
             if wait > 60:
                 raise MonitorError(f'{service}: 요청 제한 대기 {wait:g}초, 다음 정기 실행에서 재시도')
             time.sleep(max(wait, 1))
